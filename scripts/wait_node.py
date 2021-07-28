@@ -8,13 +8,12 @@ from datetime import *
 from std_srvs.srv import Empty, EmptyResponse
 
 
-
 class WaitServer(object):
-    def __init__(self, name='wait_action'):
+    def __init__(self, name="wait_action"):
         self._name = name
-        self._server = actionlib.SimpleActionServer(self._name,
-                                                   WaitAction,
-                                                   self._execute, False)
+        self._server = actionlib.SimpleActionServer(
+            self._name, WaitAction, self._execute, False
+        )
         self._server.register_preempt_callback(self._preempt_cb)
         self._server.start()
 
@@ -31,11 +30,8 @@ class WaitServer(object):
             self._server.set_preempted()
         return EmptyResponse()
 
-
-
     def _execute(self, goal):
-        end_wait_srv = rospy.Service('/wait_action/end_wait',
-                                     Empty, self._end_wait)
+        end_wait_srv = rospy.Service("/wait_action/end_wait", Empty, self._end_wait)
         try:
             now = rospy.get_rostime()
             target = goal.wait_until
@@ -53,32 +49,42 @@ class WaitServer(object):
             #     a_really_long_time = rospy.Duration(60 * 60 * 24 * 3)
             #     target = now + a_really_long_time
 
-            rospy.loginfo("target wait time: %s"
-                          % datetime.fromtimestamp(target.secs))
-
-
+            rospy.loginfo("target wait time: %s" % datetime.fromtimestamp(target.secs))
 
             # how often to provide feedback
             feedback_secs = 5.0
             feedback = WaitFeedback()
             # how long to wait
             wait_duration_secs = target.secs - now.secs
-            
 
-            # the rate to publish feedback at/check time at
-            r = rospy.Rate(1.0/feedback_secs)
+            # the rate to check time at. Use the feedback rate if the wait is longer than
+            # feedback_secs
+            r = rospy.Rate(1.0 / min(feedback_secs, wait_duration_secs))
 
+            count = 0
+            feedback_steps = wait_duration_secs / feedback_secs
+            last_feedback_time = None
+            while not rospy.is_shutdown() and not self._server.is_preempt_requested():
+                loop_time = rospy.get_rostime()
+                if (
+                    not last_feedback_time
+                    or loop_time.secs - (last_feedback_time.secs + int(feedback_secs))
+                    <= 1
+                ):
+                    feedback.percent_complete = (count / feedback_steps) * 100
+                    self._server.publish_feedback(feedback)
+                    count += 1
+                    last_feedback_time = loop_time
 
-            count = 1.0
-            feedback_steps = wait_duration_secs/feedback_secs
-            while not rospy.is_shutdown() and not self._server.is_preempt_requested() and rospy.get_rostime() < target:
-                feedback.percent_complete = count/feedback_steps
-                self._server.publish_feedback(feedback)
-                count += 1
+                # Do this check after publishing feedback so that we can finish at 100% feedback
+                if rospy.get_rostime() > target:
+                    break
+
                 r.sleep()
 
-            rospy.loginfo("waited until: %s"
-                          % datetime.fromtimestamp(rospy.get_rostime().secs))
+            rospy.loginfo(
+                "waited until: %s" % datetime.fromtimestamp(rospy.get_rostime().secs)
+            )
         finally:
             end_wait_srv.shutdown()
 
@@ -88,7 +94,7 @@ class WaitServer(object):
             self._server.set_succeeded()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
 
     rospy.init_node("wait_action")
 
